@@ -42,8 +42,7 @@
  * allowed.
  *
  * Not initializing the key (static data is initialized to 0s anyway) is the
- * same as using STATIC_KEY_INIT_FALSE and static_key_false() is
- * equivalent with static_branch().
+ * same as using STATIC_KEY_INIT_FALSE.
  *
 */
 
@@ -107,12 +106,6 @@ static __always_inline bool static_key_true(struct static_key *key)
 	return !static_key_false(key);
 }
 
-/* Deprecated. Please use 'static_key_false() instead. */
-static __always_inline bool static_branch(struct static_key *key)
-{
-	return arch_static_branch(key);
-}
-
 extern struct jump_entry __start___jump_table[];
 extern struct jump_entry __stop___jump_table[];
 
@@ -166,14 +159,6 @@ static __always_inline bool static_key_true(struct static_key *key)
 	return false;
 }
 
-/* Deprecated. Please use 'static_key_false() instead. */
-static __always_inline bool static_branch(struct static_key *key)
-{
-	if (unlikely(atomic_read(&key->enabled)) > 0)
-		return true;
-	return false;
-}
-
 static inline void static_key_slow_inc(struct static_key *key)
 {
 	atomic_inc(&key->enabled);
@@ -221,6 +206,22 @@ jump_label_rate_limit(struct static_key_deferred *key,
 static inline bool static_key_enabled(struct static_key *key)
 {
 	return (atomic_read(&key->enabled) > 0);
+}
+
+static inline void static_key_enable(struct static_key *key)
+{
+	int count = atomic_read(&key->enabled);
+
+	if (!count)
+		static_key_slow_inc(key);
+}
+
+static inline void static_key_disable(struct static_key *key)
+{
+	int count = atomic_read(&key->enabled);
+
+	if (count)
+		static_key_slow_dec(key);
 }
 
 #endif	/* _LINUX_JUMP_LABEL_H */

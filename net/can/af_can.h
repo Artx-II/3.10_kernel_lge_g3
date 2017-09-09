@@ -50,13 +50,14 @@
 
 struct receiver {
 	struct hlist_node list;
-	struct rcu_head rcu;
 	canid_t can_id;
 	canid_t mask;
 	unsigned long matches;
 	void (*func)(struct sk_buff *, void *);
 	void *data;
 	char *ident;
+	struct sock *sk;
+	struct rcu_head rcu;
 };
 
 enum { RX_ERR, RX_ALL, RX_FIL, RX_INV, RX_EFF, RX_MAX };
@@ -103,6 +104,9 @@ struct s_pstats {
 	unsigned long rcv_entries;
 	unsigned long rcv_entries_max;
 };
+
+/* receive filters subscribed for 'all' CAN devices */
+extern struct dev_rcv_lists can_rx_alldev_list;
 
 /* function prototypes for the CAN networklayer procfs (proc.c) */
 extern void can_init_proc(void);

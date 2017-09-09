@@ -78,7 +78,8 @@ posix_acl_valid(const struct posix_acl *acl)
 {
 	const struct posix_acl_entry *pa, *pe;
 	int state = ACL_USER_OBJ;
-	unsigned int id = 0;  /* keep gcc happy */
+	kuid_t prev_uid = INVALID_UID;
+	kgid_t prev_gid = INVALID_GID;
 	int needs_mask = 0;
 
 	FOREACH_ACL_ENTRY(pa, acl, pe) {
@@ -87,7 +88,6 @@ posix_acl_valid(const struct posix_acl *acl)
 		switch (pa->e_tag) {
 			case ACL_USER_OBJ:
 				if (state == ACL_USER_OBJ) {
-					id = 0;
 					state = ACL_USER;
 					break;
 				}
@@ -96,16 +96,17 @@ posix_acl_valid(const struct posix_acl *acl)
 			case ACL_USER:
 				if (state != ACL_USER)
 					return -EINVAL;
-				if (pa->e_id == ACL_UNDEFINED_ID ||
-				    pa->e_id < id)
+				if (!uid_valid(pa->e_uid))
 					return -EINVAL;
-				id = pa->e_id + 1;
+				if (uid_valid(prev_uid) &&
+				    uid_lte(pa->e_uid, prev_uid))
+					return -EINVAL;
+				prev_uid = pa->e_uid;
 				needs_mask = 1;
 				break;
 
 			case ACL_GROUP_OBJ:
 				if (state == ACL_USER) {
-					id = 0;
 					state = ACL_GROUP;
 					break;
 				}
@@ -114,10 +115,12 @@ posix_acl_valid(const struct posix_acl *acl)
 			case ACL_GROUP:
 				if (state != ACL_GROUP)
 					return -EINVAL;
-				if (pa->e_id == ACL_UNDEFINED_ID ||
-				    pa->e_id < id)
+				if (!gid_valid(pa->e_gid))
 					return -EINVAL;
-				id = pa->e_id + 1;
+				if (gid_valid(prev_gid) &&
+				    gid_lte(pa->e_gid, prev_gid))
+					return -EINVAL;
+				prev_gid = pa->e_gid;
 				needs_mask = 1;
 				break;
 
@@ -201,15 +204,12 @@ posix_acl_from_mode(umode_t mode, gfp_t flags)
 		return ERR_PTR(-ENOMEM);
 
 	acl->a_entries[0].e_tag  = ACL_USER_OBJ;
-	acl->a_entries[0].e_id   = ACL_UNDEFINED_ID;
 	acl->a_entries[0].e_perm = (mode & S_IRWXU) >> 6;
 
 	acl->a_entries[1].e_tag  = ACL_GROUP_OBJ;
-	acl->a_entries[1].e_id   = ACL_UNDEFINED_ID;
 	acl->a_entries[1].e_perm = (mode & S_IRWXG) >> 3;
 
 	acl->a_entries[2].e_tag  = ACL_OTHER;
-	acl->a_entries[2].e_id   = ACL_UNDEFINED_ID;
 	acl->a_entries[2].e_perm = (mode & S_IRWXO);
 	return acl;
 }
@@ -230,11 +230,11 @@ posix_acl_permission(struct inode *inode, const struct posix_acl *acl, int want)
                 switch(pa->e_tag) {
                         case ACL_USER_OBJ:
 				/* (May have been checked already) */
-				if (inode->i_uid == current_fsuid())
+				if (uid_eq(inode->i_uid, current_fsuid()))
                                         goto check_perm;
                                 break;
                         case ACL_USER:
-				if (pa->e_id == current_fsuid())
+				if (uid_eq(pa->e_uid, current_fsuid()))
                                         goto mask;
 				break;
                         case ACL_GROUP_OBJ:
@@ -245,7 +245,7 @@ posix_acl_permission(struct inode *inode, const struct posix_acl *acl, int want)
                                 }
 				break;
                         case ACL_GROUP:
-                                if (in_group_p(pa->e_id)) {
+				if (in_group_p(pa->e_gid)) {
 					found = 1;
 					if ((pa->e_perm & want) == want)
 						goto mask;
@@ -437,6 +437,37 @@ posix_acl_create(struct posix_acl **acl, gfp_t gfp, umode_t *mode_p)
 	return err;
 }
 EXPORT_SYMBOL(posix_acl_create);
+
+/**
+ * posix_acl_update_mode  -  update mode in set_acl
+ *
+ * Update the file mode when setting an ACL: compute the new file permission
+ * bits based on the ACL.  In addition, if the ACL is equivalent to the new
+ * file mode, set *acl to NULL to indicate that no ACL should be set.
+ *
+ * As with chmod, clear the setgit bit if the caller is not in the owning group
+ * or capable of CAP_FSETID (see inode_change_ok).
+ *
+ * Called from set_acl inode operations.
+ */
+int posix_acl_update_mode(struct inode *inode, umode_t *mode_p,
+                          struct posix_acl **acl)
+{
+        umode_t mode = inode->i_mode;
+        int error;
+
+        error = posix_acl_equiv_mode(*acl, &mode);
+        if (error < 0)
+                return error;
+        if (error == 0)
+                *acl = NULL;
+        if (!in_group_p(inode->i_gid) &&
+            !capable_wrt_inode_uidgid(inode, CAP_FSETID))
+                mode &= ~S_ISGID;
+        *mode_p = mode;
+        return 0;
+}
+EXPORT_SYMBOL(posix_acl_update_mode);
 
 int
 posix_acl_chmod(struct posix_acl **acl, gfp_t gfp, umode_t mode)

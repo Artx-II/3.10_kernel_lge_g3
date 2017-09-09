@@ -158,7 +158,6 @@ static struct shash_alg ghash_alg = {
 		.cra_blocksize		= GHASH_BLOCK_SIZE,
 		.cra_ctxsize		= sizeof(struct ghash_ctx),
 		.cra_module		= THIS_MODULE,
-		.cra_list		= LIST_HEAD_INIT(ghash_alg.base.cra_list),
 	},
 };
 
@@ -217,6 +216,29 @@ static int ghash_async_final(struct ahash_request *req)
 		struct shash_desc *desc = cryptd_shash_desc(cryptd_req);
 		return crypto_shash_final(desc, req->result);
 	}
+}
+
+static int ghash_async_import(struct ahash_request *req, const void *in)
+{
+	struct ahash_request *cryptd_req = ahash_request_ctx(req);
+	struct shash_desc *desc = cryptd_shash_desc(cryptd_req);
+	struct ghash_desc_ctx *dctx = shash_desc_ctx(desc);
+
+	ghash_async_init(req);
+	memcpy(dctx, in, sizeof(*dctx));
+	return 0;
+
+}
+
+static int ghash_async_export(struct ahash_request *req, void *out)
+{
+	struct ahash_request *cryptd_req = ahash_request_ctx(req);
+	struct shash_desc *desc = cryptd_shash_desc(cryptd_req);
+	struct ghash_desc_ctx *dctx = shash_desc_ctx(desc);
+
+	memcpy(out, dctx, sizeof(*dctx));
+	return 0;
+
 }
 
 static int ghash_async_digest(struct ahash_request *req)
@@ -286,8 +308,11 @@ static struct ahash_alg ghash_async_alg = {
 	.final		= ghash_async_final,
 	.setkey		= ghash_async_setkey,
 	.digest		= ghash_async_digest,
+	.export		= ghash_async_export,
+	.import		= ghash_async_import,
 	.halg = {
 		.digestsize	= GHASH_DIGEST_SIZE,
+		.statesize = sizeof(struct ghash_desc_ctx),
 		.base = {
 			.cra_name		= "ghash",
 			.cra_driver_name	= "ghash-clmulni",
@@ -297,7 +322,6 @@ static struct ahash_alg ghash_async_alg = {
 			.cra_blocksize		= GHASH_BLOCK_SIZE,
 			.cra_type		= &crypto_ahash_type,
 			.cra_module		= THIS_MODULE,
-			.cra_list		= LIST_HEAD_INIT(ghash_async_alg.halg.base.cra_list),
 			.cra_init		= ghash_async_init_tfm,
 			.cra_exit		= ghash_async_exit_tfm,
 		},
@@ -344,4 +368,4 @@ module_exit(ghash_pclmulqdqni_mod_exit);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("GHASH Message Digest Algorithm, "
 		   "acclerated by PCLMULQDQ-NI");
-MODULE_ALIAS("ghash");
+MODULE_ALIAS_CRYPTO("ghash");

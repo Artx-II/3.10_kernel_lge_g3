@@ -358,8 +358,8 @@ static irqreturn_t xenfb_event_handler(int rq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static int __devinit xenfb_probe(struct xenbus_device *dev,
-				 const struct xenbus_device_id *id)
+static int xenfb_probe(struct xenbus_device *dev,
+		       const struct xenbus_device_id *id)
 {
 	struct xenfb_info *info;
 	struct fb_info *fb_info;
@@ -487,8 +487,7 @@ error:
 	return ret;
 }
 
-static __devinit void
-xenfb_make_preferred_console(void)
+static void xenfb_make_preferred_console(void)
 {
 	struct console *c;
 
@@ -641,11 +640,9 @@ static void xenfb_backend_changed(struct xenbus_device *dev,
 	case XenbusStateReconfiguring:
 	case XenbusStateReconfigured:
 	case XenbusStateUnknown:
-	case XenbusStateClosed:
 		break;
 
 	case XenbusStateInitWait:
-InitWait:
 		xenbus_switch_state(dev, XenbusStateConnected);
 		break;
 
@@ -656,7 +653,8 @@ InitWait:
 		 * get Connected twice here.
 		 */
 		if (dev->state != XenbusStateConnected)
-			goto InitWait; /* no InitWait seen yet, fudge it */
+			/* no InitWait seen yet, fudge it */
+			xenbus_switch_state(dev, XenbusStateConnected);
 
 		if (xenbus_scanf(XBT_NIL, info->xbdev->otherend,
 				 "request-update", "%d", &val) < 0)
@@ -670,6 +668,10 @@ InitWait:
 		info->feature_resize = val;
 		break;
 
+	case XenbusStateClosed:
+		if (dev->state == XenbusStateClosed)
+			break;
+		/* Missed the backend's CLOSING state -- fallthrough */
 	case XenbusStateClosing:
 		xenbus_frontend_closed(dev);
 		break;

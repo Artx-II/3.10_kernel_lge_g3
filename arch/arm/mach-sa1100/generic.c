@@ -30,6 +30,7 @@
 
 #include <mach/hardware.h>
 #include <mach/irqs.h>
+#include <mach/reset.h>
 
 #include "generic.h"
 
@@ -133,6 +134,7 @@ static void sa1100_power_off(void)
 
 void sa11x0_restart(char mode, const char *cmd)
 {
+	clear_reset_status(RESET_STATUS_ALL);
 	if (mode == 's') {
 		/* Jump into ROM at address 0 */
 		soft_restart(0);
@@ -359,6 +361,10 @@ static int __init sa1100_init(void)
 
 arch_initcall(sa1100_init);
 
+void __init sa11x0_init_late(void)
+{
+	sa11x0_pm_init();
+}
 
 /*
  * Common I/O mapping:

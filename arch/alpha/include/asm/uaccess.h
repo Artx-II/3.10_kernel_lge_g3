@@ -371,14 +371,6 @@ __copy_tofrom_user_nocheck(void *to, const void *from, long len)
 	return __cu_len;
 }
 
-extern inline long
-__copy_tofrom_user(void *to, const void *from, long len, const void __user *validate)
-{
-	if (__access_ok((unsigned long)validate, len, get_fs()))
-		len = __copy_tofrom_user_nocheck(to, from, len);
-	return len;
-}
-
 #define __copy_to_user(to,from,n)					\
 ({									\
 	__chk_user_ptr(to);						\
@@ -393,17 +385,22 @@ __copy_tofrom_user(void *to, const void *from, long len, const void __user *vali
 #define __copy_to_user_inatomic __copy_to_user
 #define __copy_from_user_inatomic __copy_from_user
 
-
 extern inline long
 copy_to_user(void __user *to, const void *from, long n)
 {
-	return __copy_tofrom_user((__force void *)to, from, n, to);
+	if (likely(__access_ok((unsigned long)to, n, get_fs())))
+		n = __copy_tofrom_user_nocheck((__force void *)to, from, n);
+	return n;
 }
 
 extern inline long
 copy_from_user(void *to, const void __user *from, long n)
 {
-	return __copy_tofrom_user(to, (__force void *)from, n, from);
+	if (likely(__access_ok((unsigned long)from, n, get_fs())))
+		n = __copy_tofrom_user_nocheck(to, (__force void *)from, n);
+	else
+		memset(to, 0, n);
+	return n;
 }
 
 extern void __do_clear_user(void);
@@ -433,36 +430,12 @@ clear_user(void __user *to, long len)
 #undef __module_address
 #undef __module_call
 
-/* Returns: -EFAULT if exception before terminator, N if the entire
-   buffer filled, else strlen.  */
+#define user_addr_max() \
+        (segment_eq(get_fs(), USER_DS) ? TASK_SIZE : ~0UL)
 
-extern long __strncpy_from_user(char *__to, const char __user *__from, long __to_len);
-
-extern inline long
-strncpy_from_user(char *to, const char __user *from, long n)
-{
-	long ret = -EFAULT;
-	if (__access_ok((unsigned long)from, 0, get_fs()))
-		ret = __strncpy_from_user(to, from, n);
-	return ret;
-}
-
-/* Returns: 0 if bad, string length+1 (memory size) of string if ok */
-extern long __strlen_user(const char __user *);
-
-extern inline long strlen_user(const char __user *str)
-{
-	return access_ok(VERIFY_READ,str,0) ? __strlen_user(str) : 0;
-}
-
-/* Returns: 0 if exception before NUL or reaching the supplied limit (N),
- * a value greater than N if the limit would be exceeded, else strlen.  */
-extern long __strnlen_user(const char __user *, long);
-
-extern inline long strnlen_user(const char __user *str, long n)
-{
-	return access_ok(VERIFY_READ,str,0) ? __strnlen_user(str, n) : 0;
-}
+extern long strncpy_from_user(char *dest, const char __user *src, long count);
+extern __must_check long strlen_user(const char __user *str);
+extern __must_check long strnlen_user(const char __user *str, long n);
 
 /*
  * About the exception table:

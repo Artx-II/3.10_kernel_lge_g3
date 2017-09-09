@@ -34,6 +34,11 @@
 #include <linux/slab.h>
 #include "ubifs.h"
 
+static int try_read_node(const struct ubifs_info *c, void *buf, int type,
+			 int len, int lnum, int offs);
+static int fallible_read_node(struct ubifs_info *c, const union ubifs_key *key,
+			      struct ubifs_zbranch *zbr, void *node);
+
 /*
  * Returned codes of 'matches_name()' and 'fallible_matches_name()' functions.
  * @NAME_LESS: name corresponding to the first argument is less than second
@@ -339,8 +344,8 @@ static int lnc_add(struct ubifs_info *c, struct ubifs_zbranch *zbr,
 
 	err = ubifs_validate_entry(c, dent);
 	if (err) {
-		dbg_dump_stack();
-		dbg_dump_node(c, dent);
+		dump_stack();
+		ubifs_dump_node(c, dent);
 		return err;
 	}
 
@@ -372,8 +377,8 @@ static int lnc_add_directly(struct ubifs_info *c, struct ubifs_zbranch *zbr,
 
 	err = ubifs_validate_entry(c, node);
 	if (err) {
-		dbg_dump_stack();
-		dbg_dump_node(c, node);
+		dump_stack();
+		ubifs_dump_node(c, node);
 		return err;
 	}
 
@@ -419,7 +424,19 @@ static int tnc_read_node_nm(struct ubifs_info *c, struct ubifs_zbranch *zbr,
 		return 0;
 	}
 
-	err = ubifs_tnc_read_node(c, zbr, node);
+	if (c->replaying) {
+		err = fallible_read_node(c, &zbr->key, zbr, node);
+		/*
+		 * When the node was not found, return -ENOENT, 0 otherwise.
+		 * Negative return codes stay as-is.
+		 */
+		if (err == 0)
+			err = -ENOENT;
+		else if (err == 1)
+			err = 0;
+	} else {
+		err = ubifs_tnc_read_node(c, zbr, node);
+	}
 	if (err)
 		return err;
 
@@ -1733,8 +1750,8 @@ out_err:
 	err = -EINVAL;
 out:
 	ubifs_err("bad node at LEB %d:%d", zbr->lnum, zbr->offs);
-	dbg_dump_node(c, buf);
-	dbg_dump_stack();
+	ubifs_dump_node(c, buf);
+	dump_stack();
 	return err;
 }
 
@@ -1775,7 +1792,7 @@ int ubifs_tnc_bulk_read(struct ubifs_info *c, struct bu_info *bu)
 	if (err && err != -EBADMSG) {
 		ubifs_err("failed to read from LEB %d:%d, error %d",
 			  lnum, offs, err);
-		dbg_dump_stack();
+		dump_stack();
 		dbg_tnck(&bu->key, "key ");
 		return err;
 	}
@@ -2361,7 +2378,7 @@ int ubifs_tnc_add_nm(struct ubifs_info *c, const union ubifs_key *key,
 			 * by passing 'ubifs_tnc_remove_nm()' the same key but
 			 * an unmatchable name.
 			 */
-			struct qstr noname = { .len = 0, .name = "" };
+			struct qstr noname = { .name = "" };
 
 			err = dbg_check_tnc(c, 0);
 			mutex_unlock(&c->tnc_mutex);
@@ -2403,7 +2420,7 @@ static int tnc_delete(struct ubifs_info *c, struct ubifs_znode *znode, int n)
 
 	err = ubifs_add_dirt(c, zbr->lnum, zbr->len);
 	if (err) {
-		dbg_dump_znode(c, znode);
+		ubifs_dump_znode(c, znode);
 		return err;
 	}
 
@@ -2649,7 +2666,7 @@ int ubifs_tnc_remove_range(struct ubifs_info *c, union ubifs_key *from_key,
 			err = ubifs_add_dirt(c, znode->zbranch[i].lnum,
 					     znode->zbranch[i].len);
 			if (err) {
-				dbg_dump_znode(c, znode);
+				ubifs_dump_znode(c, znode);
 				goto out_unlock;
 			}
 			dbg_tnck(key, "removing key ");
@@ -2783,7 +2800,11 @@ struct ubifs_dent_node *ubifs_tnc_next_ent(struct ubifs_info *c,
 	if (nm->name) {
 		if (err) {
 			/* Handle collisions */
-			err = resolve_collision(c, key, &znode, &n, nm);
+			if (c->replaying)
+				err = fallible_resolve_collision(c, key, &znode, &n,
+							 nm, 0);
+			else
+				err = resolve_collision(c, key, &znode, &n, nm);
 			dbg_tnc("rc returned %d, znode %p, n %d",
 				err, znode, n);
 			if (unlikely(err < 0))
@@ -3275,8 +3296,6 @@ out_unlock:
 	return err;
 }
 
-#ifdef CONFIG_UBIFS_FS_DEBUG
-
 /**
  * dbg_check_inode_size - check if inode size is correct.
  * @c: UBIFS file-system description object
@@ -3335,13 +3354,11 @@ out_dump:
 		  (unsigned long)inode->i_ino, size,
 		  ((loff_t)block) << UBIFS_BLOCK_SHIFT);
 	mutex_unlock(&c->tnc_mutex);
-	dbg_dump_inode(c, inode);
-	dbg_dump_stack();
+	ubifs_dump_inode(c, inode);
+	dump_stack();
 	return -EINVAL;
 
 out_unlock:
 	mutex_unlock(&c->tnc_mutex);
 	return err;
 }
-
-#endif /* CONFIG_UBIFS_FS_DEBUG */

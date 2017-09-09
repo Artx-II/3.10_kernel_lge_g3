@@ -21,17 +21,6 @@
 #define PGTABLE_RANGE (ASM_CONST(1) << PGTABLE_EADDR_SIZE)
 
 
-/* Some sanity checking */
-#if TASK_SIZE_USER64 > PGTABLE_RANGE
-#error TASK_SIZE_USER64 exceeds pagetable range
-#endif
-
-#ifdef CONFIG_PPC_STD_MMU_64
-#if TASK_SIZE_USER64 > (1UL << (USER_ESID_BITS + SID_SHIFT))
-#error TASK_SIZE_USER64 exceeds user VSID range
-#endif
-#endif
-
 /*
  * Define the address range of the kernel non-linear virtual area
  */
@@ -41,7 +30,7 @@
 #else
 #define KERN_VIRT_START ASM_CONST(0xD000000000000000)
 #endif
-#define KERN_VIRT_SIZE	PGTABLE_RANGE
+#define KERN_VIRT_SIZE	ASM_CONST(0x0000100000000000)
 
 /*
  * The vmalloc space starts at the beginning of that region, and
@@ -117,9 +106,6 @@
 
 #ifndef __ASSEMBLY__
 
-#include <linux/stddef.h>
-#include <asm/tlbflush.h>
-
 /*
  * This is the default implementation of various PTE accessors, it's
  * used in all cases except Book3S with 64K pages where we have a
@@ -144,7 +130,19 @@
 #define pte_iterate_hashed_end() } while(0)
 
 #ifdef CONFIG_PPC_HAS_HASH_64K
-#define pte_pagesize_index(mm, addr, pte)	get_slice_psize(mm, addr)
+/*
+ * We expect this to be called only for user addresses or kernel virtual
+ * addresses other than the linear mapping.
+ */
+#define pte_pagesize_index(mm, addr, pte)			\
+	({							\
+		unsigned int psize;				\
+		if (is_kernel_addr(addr))			\
+			psize = MMU_PAGE_4K;			\
+		else						\
+			psize = get_slice_psize(mm, addr);	\
+		psize;						\
+	})
 #else
 #define pte_pagesize_index(mm, addr, pte)	MMU_PAGE_4K
 #endif
@@ -181,8 +179,7 @@
  * Find an entry in a page-table-directory.  We combine the address region
  * (the high order N bits) and the pgd portion of the address.
  */
-/* to avoid overflow in free_pgtables we don't use PTRS_PER_PGD here */
-#define pgd_index(address) (((address) >> (PGDIR_SHIFT)) & 0x1ff)
+#define pgd_index(address) (((address) >> (PGDIR_SHIFT)) & (PTRS_PER_PGD - 1))
 
 #define pgd_offset(mm, address)	 ((mm)->pgd + pgd_index(address))
 
@@ -198,7 +195,8 @@
 /* to find an entry in a kernel page-table-directory */
 /* This now only contains the vmalloc pages */
 #define pgd_offset_k(address) pgd_offset(&init_mm, address)
-
+extern void hpte_need_flush(struct mm_struct *mm, unsigned long addr,
+			    pte_t *ptep, unsigned long pte, int huge);
 
 /* Atomic PTE updates */
 static inline unsigned long pte_update(struct mm_struct *mm,

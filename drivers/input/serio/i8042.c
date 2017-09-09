@@ -1223,6 +1223,7 @@ static int __init i8042_create_kbd_port(void)
 	serio->start		= i8042_start;
 	serio->stop		= i8042_stop;
 	serio->close		= i8042_port_close;
+	serio->ps2_cmd_mutex	= &i8042_mutex;
 	serio->port_data	= port;
 	serio->dev.parent	= &i8042_platform_device->dev;
 	strlcpy(serio->name, "i8042 KBD port", sizeof(serio->name));
@@ -1248,6 +1249,7 @@ static int __init i8042_create_aux_port(int idx)
 	serio->write		= i8042_aux_write;
 	serio->start		= i8042_start;
 	serio->stop		= i8042_stop;
+	serio->ps2_cmd_mutex	= &i8042_mutex;
 	serio->port_data	= port;
 	serio->dev.parent	= &i8042_platform_device->dev;
 	if (idx < 0) {
@@ -1298,7 +1300,7 @@ static void __init i8042_register_ports(void)
 	}
 }
 
-static void __devexit i8042_unregister_ports(void)
+static void i8042_unregister_ports(void)
 {
 	int i;
 
@@ -1309,21 +1311,6 @@ static void __devexit i8042_unregister_ports(void)
 		}
 	}
 }
-
-/*
- * Checks whether port belongs to i8042 controller.
- */
-bool i8042_check_port_owner(const struct serio *port)
-{
-	int i;
-
-	for (i = 0; i < I8042_NUM_PORTS; i++)
-		if (i8042_ports[i].serio == port)
-			return true;
-
-	return false;
-}
-EXPORT_SYMBOL(i8042_check_port_owner);
 
 static void i8042_free_irqs(void)
 {
@@ -1451,7 +1438,7 @@ static int __init i8042_probe(struct platform_device *dev)
 	return error;
 }
 
-static int __devexit i8042_remove(struct platform_device *dev)
+static int i8042_remove(struct platform_device *dev)
 {
 	i8042_unregister_ports();
 	i8042_free_irqs();
@@ -1469,7 +1456,7 @@ static struct platform_driver i8042_driver = {
 		.pm	= &i8042_pm_ops,
 #endif
 	},
-	.remove		= __devexit_p(i8042_remove),
+	.remove		= i8042_remove,
 	.shutdown	= i8042_shutdown,
 };
 

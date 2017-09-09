@@ -216,7 +216,7 @@ static s32 dpot_read_i2c(struct dpot_data *dpot, u8 reg)
 			 */
 			value = swab16(value);
 
-			if (dpot->uid == DPOT_UID(AD5271_ID))
+			if (dpot->uid == DPOT_UID(AD5274_ID))
 				value = value >> 2;
 		return value;
 	default:
@@ -641,7 +641,7 @@ static const struct attribute_group ad525x_group_commands = {
 	.attrs = ad525x_attributes_commands,
 };
 
-__devinit int ad_dpot_add_files(struct device *dev,
+int ad_dpot_add_files(struct device *dev,
 		unsigned features, unsigned rdac)
 {
 	int err = sysfs_create_file(&dev->kobj,
@@ -685,7 +685,7 @@ inline void ad_dpot_remove_files(struct device *dev,
 	}
 }
 
-int __devinit ad_dpot_probe(struct device *dev,
+int ad_dpot_probe(struct device *dev,
 		struct ad_dpot_bus_data *bdata, unsigned long devid,
 			    const char *name)
 {
@@ -749,7 +749,7 @@ exit:
 }
 EXPORT_SYMBOL(ad_dpot_probe);
 
-__devexit int ad_dpot_remove(struct device *dev)
+int ad_dpot_remove(struct device *dev)
 {
 	struct dpot_data *data = dev_get_drvdata(dev);
 	int i;

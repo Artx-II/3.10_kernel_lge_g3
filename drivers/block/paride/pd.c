@@ -126,7 +126,7 @@
 */
 #include <linux/types.h>
 
-static bool verbose = 0;
+static int verbose = 0;
 static int major = PD_MAJOR;
 static char *name = PD_NAME;
 static int cluster = 64;
@@ -161,7 +161,7 @@ enum {D_PRT, D_PRO, D_UNI, D_MOD, D_GEO, D_SBY, D_DLY, D_SLV};
 static DEFINE_MUTEX(pd_mutex);
 static DEFINE_SPINLOCK(pd_lock);
 
-module_param(verbose, bool, 0);
+module_param(verbose, int, 0);
 module_param(major, int, 0);
 module_param(name, charp, 0);
 module_param(cluster, int, 0);
@@ -783,7 +783,7 @@ static int pd_ioctl(struct block_device *bdev, fmode_t mode,
 	}
 }
 
-static int pd_release(struct gendisk *p, fmode_t mode)
+static void pd_release(struct gendisk *p, fmode_t mode)
 {
 	struct pd_unit *disk = p->private_data;
 
@@ -791,8 +791,6 @@ static int pd_release(struct gendisk *p, fmode_t mode)
 	if (!--disk->access && disk->removable)
 		pd_special_command(disk, pd_door_unlock);
 	mutex_unlock(&pd_mutex);
-
-	return 0;
 }
 
 static unsigned int pd_check_events(struct gendisk *p, unsigned int clearing)

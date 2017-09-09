@@ -280,7 +280,7 @@ int __init nvram_remove_partition(const char *name, int sig,
 
 		/* Make partition a free partition */
 		part->header.signature = NVRAM_SIG_FREE;
-		strncpy(part->header.name, "wwwwwwwwwwww", 12);
+		memset(part->header.name, 'w', 12);
 		part->header.checksum = nvram_checksum(&part->header);
 		rc = nvram_write_header(part);
 		if (rc <= 0) {
@@ -298,8 +298,8 @@ int __init nvram_remove_partition(const char *name, int sig,
 		}
 		if (prev) {
 			prev->header.length += part->header.length;
-			prev->header.checksum = nvram_checksum(&part->header);
-			rc = nvram_write_header(part);
+			prev->header.checksum = nvram_checksum(&prev->header);
+			rc = nvram_write_header(prev);
 			if (rc <= 0) {
 				printk(KERN_ERR "nvram_remove_partition: nvram_write failed (%d)\n", rc);
 				return rc;
@@ -511,8 +511,7 @@ int __init nvram_scan_partitions(void)
 			       "detected: 0-length partition\n");
 			goto out;
 		}
-		tmp_part = (struct nvram_partition *)
-			kmalloc(sizeof(struct nvram_partition), GFP_KERNEL);
+		tmp_part = kmalloc(sizeof(struct nvram_partition), GFP_KERNEL);
 		err = -ENOMEM;
 		if (!tmp_part) {
 			printk(KERN_ERR "nvram_scan_partitions: kmalloc failed\n");

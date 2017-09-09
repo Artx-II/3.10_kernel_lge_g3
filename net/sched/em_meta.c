@@ -176,11 +176,12 @@ META_COLLECTOR(int_vlan_tag)
 {
 	unsigned short tag;
 
-	tag = vlan_tx_tag_get(skb);
-	if (!tag && __vlan_get_tag(skb, &tag))
-		*err = -1;
-	else
+	if (vlan_tx_tag_present(skb))
+		dst->value = vlan_tx_tag_get(skb);
+	else if (!__vlan_get_tag(skb, &tag))
 		dst->value = tag;
+	else
+		*err = -1;
 }
 
 
@@ -264,7 +265,7 @@ META_COLLECTOR(int_rtiif)
 	if (unlikely(skb_rtable(skb) == NULL))
 		*err = -1;
 	else
-		dst->value = skb_rtable(skb)->rt_iif;
+		dst->value = inet_iif(skb);
 }
 
 /**************************************************************************
@@ -461,7 +462,7 @@ META_COLLECTOR(int_sk_sndtimeo)
 META_COLLECTOR(int_sk_sendmsg_off)
 {
 	SKIP_NONLOCAL(skb);
-	dst->value = skb->sk->sk_sndmsg_off;
+	dst->value = skb->sk->sk_frag.offset;
 }
 
 META_COLLECTOR(int_sk_write_pend)
@@ -585,8 +586,9 @@ static void meta_var_apply_extras(struct meta_value *v,
 
 static int meta_var_dump(struct sk_buff *skb, struct meta_value *v, int tlv)
 {
-	if (v->val && v->len)
-		NLA_PUT(skb, tlv, v->len, (void *) v->val);
+	if (v->val && v->len &&
+	    nla_put(skb, tlv, v->len, (void *) v->val))
+		goto nla_put_failure;
 	return 0;
 
 nla_put_failure:
@@ -636,10 +638,13 @@ static void meta_int_apply_extras(struct meta_value *v,
 
 static int meta_int_dump(struct sk_buff *skb, struct meta_value *v, int tlv)
 {
-	if (v->len == sizeof(unsigned long))
-		NLA_PUT(skb, tlv, sizeof(unsigned long), &v->val);
-	else if (v->len == sizeof(u32))
-		NLA_PUT_U32(skb, tlv, v->val);
+	if (v->len == sizeof(unsigned long)) {
+		if (nla_put(skb, tlv, sizeof(unsigned long), &v->val))
+			goto nla_put_failure;
+	} else if (v->len == sizeof(u32)) {
+		if (nla_put_u32(skb, tlv, v->val))
+			goto nla_put_failure;
+	}
 
 	return 0;
 
@@ -831,7 +836,8 @@ static int em_meta_dump(struct sk_buff *skb, struct tcf_ematch *em)
 	memcpy(&hdr.left, &meta->lvalue.hdr, sizeof(hdr.left));
 	memcpy(&hdr.right, &meta->rvalue.hdr, sizeof(hdr.right));
 
-	NLA_PUT(skb, TCA_EM_META_HDR, sizeof(hdr), &hdr);
+	if (nla_put(skb, TCA_EM_META_HDR, sizeof(hdr), &hdr))
+		goto nla_put_failure;
 
 	ops = meta_type_ops(&meta->lvalue);
 	if (ops->dump(skb, &meta->lvalue, TCA_EM_META_LVALUE) < 0 ||

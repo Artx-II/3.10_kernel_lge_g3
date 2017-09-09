@@ -39,6 +39,8 @@
  *
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/pci.h>
 #include "ath5k.h"
 
@@ -75,7 +77,7 @@ static DEFINE_PCI_DEVICE_TABLE(ath5k_led_devices) = {
 	/* HP Compaq CQ60-206US (ddreggors@jumptv.com) */
 	{ ATH_SDEVICE(PCI_VENDOR_ID_HP, 0x0137a), ATH_LED(3, 1) },
 	/* HP Compaq C700 (nitrousnrg@gmail.com) */
-	{ ATH_SDEVICE(PCI_VENDOR_ID_HP, 0x0137b), ATH_LED(3, 1) },
+	{ ATH_SDEVICE(PCI_VENDOR_ID_HP, 0x0137b), ATH_LED(3, 0) },
 	/* LiteOn AR5BXB63 (magooz@salug.it) */
 	{ ATH_SDEVICE(PCI_VENDOR_ID_ATHEROS, 0x3067), ATH_LED(3, 0) },
 	/* IBM-specific AR5212 (all others) */
@@ -156,7 +158,7 @@ void ath5k_unregister_leds(struct ath5k_hw *ah)
 	ath5k_unregister_led(&ah->tx_led);
 }
 
-int __devinit ath5k_init_leds(struct ath5k_hw *ah)
+int ath5k_init_leds(struct ath5k_hw *ah)
 {
 	int ret = 0;
 	struct ieee80211_hw *hw = ah->hw;

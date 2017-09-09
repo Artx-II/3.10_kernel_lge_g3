@@ -26,12 +26,6 @@
 #include "cthw20k2.h"
 #include "ct20k2reg.h"
 
-#if BITS_PER_LONG == 32
-#define CT_XFI_DMA_MASK		DMA_BIT_MASK(32) /* 32 bit PTE */
-#else
-#define CT_XFI_DMA_MASK		DMA_BIT_MASK(64) /* 64 bit PTE */
-#endif
-
 struct hw20k2 {
 	struct hw hw;
 	/* for i2c */
@@ -2026,18 +2020,18 @@ static int hw_card_start(struct hw *hw)
 	int err = 0;
 	struct pci_dev *pci = hw->pci;
 	unsigned int gctl;
+	const unsigned int dma_bits = BITS_PER_LONG;
 
 	err = pci_enable_device(pci);
 	if (err < 0)
 		return err;
 
 	/* Set DMA transfer mask */
-	if (pci_set_dma_mask(pci, CT_XFI_DMA_MASK) < 0 ||
-	    pci_set_consistent_dma_mask(pci, CT_XFI_DMA_MASK) < 0) {
-		printk(KERN_ERR "ctxfi: architecture does not support PCI "
-		"busmaster DMA with mask 0x%llx\n", CT_XFI_DMA_MASK);
-		err = -ENXIO;
-		goto error1;
+	if (!dma_set_mask(&pci->dev, DMA_BIT_MASK(dma_bits))) {
+		dma_set_coherent_mask(&pci->dev, DMA_BIT_MASK(dma_bits));
+	} else {
+		dma_set_mask(&pci->dev, DMA_BIT_MASK(32));
+		dma_set_coherent_mask(&pci->dev, DMA_BIT_MASK(32));
 	}
 
 	if (!hw->io_base) {
@@ -2201,8 +2195,8 @@ static int hw_card_init(struct hw *hw, struct card_conf *info)
 	return 0;
 }
 
-#ifdef CONFIG_PM
-static int hw_suspend(struct hw *hw, pm_message_t state)
+#ifdef CONFIG_PM_SLEEP
+static int hw_suspend(struct hw *hw)
 {
 	struct pci_dev *pci = hw->pci;
 
@@ -2210,7 +2204,7 @@ static int hw_suspend(struct hw *hw, pm_message_t state)
 
 	pci_disable_device(pci);
 	pci_save_state(pci);
-	pci_set_power_state(pci, pci_choose_state(pci, state));
+	pci_set_power_state(pci, PCI_D3hot);
 
 	return 0;
 }
@@ -2237,7 +2231,7 @@ static void hw_write_20kx(struct hw *hw, u32 reg, u32 data)
 	writel(data, (void *)(hw->mem_base + reg));
 }
 
-static struct hw ct20k2_preset __devinitdata = {
+static struct hw ct20k2_preset = {
 	.irq = -1,
 
 	.card_init = hw_card_init,
@@ -2250,7 +2244,7 @@ static struct hw ct20k2_preset __devinitdata = {
 	.output_switch_put = hw_output_switch_put,
 	.mic_source_switch_get = hw_mic_source_switch_get,
 	.mic_source_switch_put = hw_mic_source_switch_put,
-#ifdef CONFIG_PM
+#ifdef CONFIG_PM_SLEEP
 	.suspend = hw_suspend,
 	.resume = hw_resume,
 #endif
@@ -2345,7 +2339,7 @@ static struct hw ct20k2_preset __devinitdata = {
 	.get_wc = get_wc,
 };
 
-int __devinit create_20k2_hw_obj(struct hw **rhw)
+int create_20k2_hw_obj(struct hw **rhw)
 {
 	struct hw20k2 *hw20k2;
 

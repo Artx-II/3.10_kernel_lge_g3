@@ -118,6 +118,9 @@ MODULE_LICENSE("GPL v2");
  */
 #define EMS_USB_ARM7_CLOCK 8000000
 
+#define CPC_TX_QUEUE_TRIGGER_LOW	25
+#define CPC_TX_QUEUE_TRIGGER_HIGH	35
+
 /*
  * CAN-Message representation in a CPC_MSG. Message object type is
  * CPC_MSG_TYPE_CAN_FRAME or CPC_MSG_TYPE_RTR_FRAME or
@@ -245,7 +248,6 @@ struct ems_tx_urb_context {
 
 struct ems_usb {
 	struct can_priv can; /* must be the first member */
-	int open_time;
 
 	struct sk_buff *echo_skb[MAX_TX_URBS];
 
@@ -280,6 +282,11 @@ static void ems_usb_read_interrupt_callback(struct urb *urb)
 	switch (urb->status) {
 	case 0:
 		dev->free_slots = dev->intr_in_buffer[1];
+		if(dev->free_slots > CPC_TX_QUEUE_TRIGGER_HIGH){
+			if (netif_queue_stopped(netdev)){
+				netif_wake_queue(netdev);
+			}
+		}
 		break;
 
 	case -ECONNRESET: /* unlink */
@@ -531,8 +538,6 @@ static void ems_usb_write_bulk_callback(struct urb *urb)
 	/* Release context */
 	context->echo_index = MAX_TX_URBS;
 
-	if (netif_queue_stopped(netdev))
-		netif_wake_queue(netdev);
 }
 
 /*
@@ -592,7 +597,7 @@ static int ems_usb_start(struct ems_usb *dev)
 	int err, i;
 
 	dev->intr_in_buffer[0] = 0;
-	dev->free_slots = 15; /* initial size */
+	dev->free_slots = 50; /* initial size */
 
 	for (i = 0; i < MAX_RX_URBS; i++) {
 		struct urb *urb = NULL;
@@ -728,7 +733,6 @@ static int ems_usb_open(struct net_device *netdev)
 		return err;
 	}
 
-	dev->open_time = jiffies;
 
 	netif_start_queue(netdev);
 
@@ -843,7 +847,7 @@ static netdev_tx_t ems_usb_start_xmit(struct sk_buff *skb, struct net_device *ne
 
 		/* Slow down tx path */
 		if (atomic_read(&dev->active_tx_urbs) >= MAX_TX_URBS ||
-		    dev->free_slots < 5) {
+		    dev->free_slots < CPC_TX_QUEUE_TRIGGER_LOW) {
 			netif_stop_queue(netdev);
 		}
 	}
@@ -878,8 +882,6 @@ static int ems_usb_close(struct net_device *netdev)
 
 	close_candev(netdev);
 
-	dev->open_time = 0;
-
 	return 0;
 }
 
@@ -889,7 +891,7 @@ static const struct net_device_ops ems_usb_netdev_ops = {
 	.ndo_start_xmit = ems_usb_start_xmit,
 };
 
-static struct can_bittiming_const ems_usb_bittiming_const = {
+static const struct can_bittiming_const ems_usb_bittiming_const = {
 	.name = "ems_usb",
 	.tseg1_min = 1,
 	.tseg1_max = 16,
@@ -904,9 +906,6 @@ static struct can_bittiming_const ems_usb_bittiming_const = {
 static int ems_usb_set_mode(struct net_device *netdev, enum can_mode mode)
 {
 	struct ems_usb *dev = netdev_priv(netdev);
-
-	if (!dev->open_time)
-		return -EINVAL;
 
 	switch (mode) {
 	case CAN_MODE_START:
@@ -1021,17 +1020,13 @@ static int ems_usb_probe(struct usb_interface *intf,
 	}
 
 	dev->intr_in_buffer = kzalloc(INTR_IN_BUFFER_SIZE, GFP_KERNEL);
-	if (!dev->intr_in_buffer) {
-		dev_err(&intf->dev, "Couldn't alloc Intr buffer\n");
+	if (!dev->intr_in_buffer)
 		goto cleanup_intr_urb;
-	}
 
 	dev->tx_msg_buffer = kzalloc(CPC_HEADER_SIZE +
 				     sizeof(struct ems_cpc_msg), GFP_KERNEL);
-	if (!dev->tx_msg_buffer) {
-		dev_err(&intf->dev, "Couldn't alloc Tx buffer\n");
+	if (!dev->tx_msg_buffer)
 		goto cleanup_intr_in_buffer;
-	}
 
 	usb_set_intfdata(intf, dev);
 

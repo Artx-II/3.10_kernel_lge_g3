@@ -724,6 +724,8 @@ fail:
  */
 static void free_profile(struct aa_profile *profile)
 {
+	struct aa_profile *p;
+
 	AA_DEBUG("%s(%p)\n", __func__, profile);
 
 	if (!profile)
@@ -751,7 +753,27 @@ static void free_profile(struct aa_profile *profile)
 	aa_put_dfa(profile->xmatch);
 	aa_put_dfa(profile->policy.dfa);
 
-	aa_put_profile(profile->replacedby);
+	/* put the profile reference for replacedby, but not via
+	 * put_profile(kref_put).
+	 * replacedby can form a long chain that can result in cascading
+	 * frees that blows the stack because kref_put makes a nested fn
+	 * call (it looks like recursion, with free_profile calling
+	 * free_profile) for each profile in the chain lp#1056078.
+	 */
+	for (p = profile->replacedby; p; ) {
+		if (atomic_dec_and_test(&p->base.count.refcount)) {
+			/* no more refs on p, grab its replacedby */
+			struct aa_profile *next = p->replacedby;
+			/* break the chain */
+			p->replacedby = NULL;
+			/* now free p, chain is broken */
+			free_profile(p);
+
+			/* follow up with next profile in the chain */
+			p = next;
+		} else
+			break;
+	}
 
 	kzfree(profile);
 }
@@ -903,6 +925,10 @@ struct aa_profile *aa_lookup_profile(struct aa_namespace *ns, const char *hname)
 	profile = aa_get_profile(__lookup_profile(&ns->base, hname));
 	read_unlock(&ns->lock);
 
+	/* the unconfined profile is not in the regular profile list */
+	if (!profile && strcmp(hname, "unconfined") == 0)
+		profile = aa_get_profile(ns->unconfined);
+
 	/* refcount released by caller */
 	return profile;
 }
@@ -965,7 +991,7 @@ static int audit_policy(int op, gfp_t gfp, const char *name, const char *info,
 {
 	struct common_audit_data sa;
 	struct apparmor_audit_data aad = {0,};
-	COMMON_AUDIT_DATA_INIT(&sa, NONE);
+	sa.type = LSM_AUDIT_DATA_NONE;
 	sa.aad = &aad;
 	aad.op = op;
 	aad.name = name;
@@ -974,6 +1000,22 @@ static int audit_policy(int op, gfp_t gfp, const char *name, const char *info,
 
 	return aa_audit(AUDIT_APPARMOR_STATUS, __aa_current_profile(), gfp,
 			&sa, NULL);
+}
+
+bool policy_view_capable(void)
+{
+	struct user_namespace *user_ns = current_user_ns();
+	bool response = false;
+
+	if (ns_capable(user_ns, CAP_MAC_ADMIN))
+		response = true;
+
+	return response;
+}
+
+bool policy_admin_capable(void)
+{
+	return policy_view_capable() && !aa_g_lock_policy;
 }
 
 /**
@@ -990,7 +1032,7 @@ bool aa_may_manage_policy(int op)
 		return 0;
 	}
 
-	if (!capable(CAP_MAC_ADMIN)) {
+	if (!policy_admin_capable()) {
 		audit_policy(op, GFP_KERNEL, NULL, "not policy admin", -EACCES);
 		return 0;
 	}

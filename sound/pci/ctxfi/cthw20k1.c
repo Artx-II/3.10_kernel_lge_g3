@@ -27,12 +27,6 @@
 #include "cthw20k1.h"
 #include "ct20k1reg.h"
 
-#if BITS_PER_LONG == 32
-#define CT_XFI_DMA_MASK		DMA_BIT_MASK(32) /* 32 bit PTE */
-#else
-#define CT_XFI_DMA_MASK		DMA_BIT_MASK(64) /* 64 bit PTE */
-#endif
-
 struct hw20k1 {
 	struct hw hw;
 	spinlock_t reg_20k1_lock;
@@ -1903,19 +1897,18 @@ static int hw_card_start(struct hw *hw)
 {
 	int err;
 	struct pci_dev *pci = hw->pci;
+	const unsigned int dma_bits = BITS_PER_LONG;
 
 	err = pci_enable_device(pci);
 	if (err < 0)
 		return err;
 
 	/* Set DMA transfer mask */
-	if (pci_set_dma_mask(pci, CT_XFI_DMA_MASK) < 0 ||
-	    pci_set_consistent_dma_mask(pci, CT_XFI_DMA_MASK) < 0) {
-		printk(KERN_ERR "architecture does not support PCI "
-				"busmaster DMA with mask 0x%llx\n",
-		       CT_XFI_DMA_MASK);
-		err = -ENXIO;
-		goto error1;
+	if (!dma_set_mask(&pci->dev, DMA_BIT_MASK(dma_bits))) {
+		dma_set_coherent_mask(&pci->dev, DMA_BIT_MASK(dma_bits));
+	} else {
+		dma_set_mask(&pci->dev, DMA_BIT_MASK(32));
+		dma_set_coherent_mask(&pci->dev, DMA_BIT_MASK(32));
 	}
 
 	if (!hw->io_base) {
@@ -2085,8 +2078,8 @@ static int hw_card_init(struct hw *hw, struct card_conf *info)
 	return 0;
 }
 
-#ifdef CONFIG_PM
-static int hw_suspend(struct hw *hw, pm_message_t state)
+#ifdef CONFIG_PM_SLEEP
+static int hw_suspend(struct hw *hw)
 {
 	struct pci_dev *pci = hw->pci;
 
@@ -2099,7 +2092,7 @@ static int hw_suspend(struct hw *hw, pm_message_t state)
 
 	pci_disable_device(pci);
 	pci_save_state(pci);
-	pci_set_power_state(pci, pci_choose_state(pci, state));
+	pci_set_power_state(pci, PCI_D3hot);
 
 	return 0;
 }
@@ -2171,7 +2164,7 @@ static void hw_write_pci(struct hw *hw, u32 reg, u32 data)
 		&container_of(hw, struct hw20k1, hw)->reg_pci_lock, flags);
 }
 
-static struct hw ct20k1_preset __devinitdata = {
+static struct hw ct20k1_preset = {
 	.irq = -1,
 
 	.card_init = hw_card_init,
@@ -2180,7 +2173,7 @@ static struct hw ct20k1_preset __devinitdata = {
 	.is_adc_source_selected = hw_is_adc_input_selected,
 	.select_adc_source = hw_adc_input_select,
 	.capabilities = hw_capabilities,
-#ifdef CONFIG_PM
+#ifdef CONFIG_PM_SLEEP
 	.suspend = hw_suspend,
 	.resume = hw_resume,
 #endif
@@ -2275,7 +2268,7 @@ static struct hw ct20k1_preset __devinitdata = {
 	.get_wc = get_wc,
 };
 
-int __devinit create_20k1_hw_obj(struct hw **rhw)
+int create_20k1_hw_obj(struct hw **rhw)
 {
 	struct hw20k1 *hw20k1;
 

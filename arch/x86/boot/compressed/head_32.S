@@ -30,18 +30,65 @@
 #include <asm/boot.h>
 #include <asm/asm-offsets.h>
 
+/*
+ * The 32-bit x86 assembler in binutils 2.26 will generate R_386_GOT32X
+ * relocation to get the symbol address in PIC.  When the compressed x86
+ * kernel isn't built as PIC, the linker optimizes R_386_GOT32X
+ * relocations to their fixed symbol addresses.  However, when the
+ * compressed x86 kernel is loaded at a different address, it leads
+ * to the following load failure:
+ *
+ *   Failed to allocate space for phdrs
+ *
+ * during the decompression stage.
+ *
+ * If the compressed x86 kernel is relocatable at run-time, it should be
+ * compiled with -fPIE, instead of -fPIC, if possible and should be built as
+ * Position Independent Executable (PIE) so that linker won't optimize
+ * R_386_GOT32X relocation to its fixed symbol address.  Older
+ * linkers generate R_386_32 relocations against locally defined symbols,
+ * _bss, _ebss, _got and _egot, in PIE.  It isn't wrong, just less
+ * optimal than R_386_RELATIVE.  But the x86 kernel fails to properly handle
+ * R_386_32 relocations when relocating the kernel.  To generate
+ * R_386_RELATIVE relocations, we mark _bss, _ebss, _got and _egot as
+ * hidden:
+ */
+	.hidden _bss
+	.hidden _ebss
+	.hidden _got
+	.hidden _egot
+
 	__HEAD
 ENTRY(startup_32)
 #ifdef CONFIG_EFI_STUB
 	jmp	preferred_addr
 
-	.balign	0x10
 	/*
 	 * We don't need the return address, so set up the stack so
-	 * efi_main() can find its arugments.
+	 * efi_main() can find its arguments.
 	 */
+ENTRY(efi_pe_entry)
 	add	$0x4, %esp
 
+	call	make_boot_params
+	cmpl	$0, %eax
+	je	1f
+	movl	0x4(%esp), %esi
+	movl	(%esp), %ecx
+	pushl	%eax
+	pushl	%esi
+	pushl	%ecx
+
+	call	reloc
+reloc:
+	popl	%ecx
+	subl	$reloc, %ecx
+	movl	%ecx, BP_code32_start(%eax)
+
+	sub	$0x4, %esp
+
+ENTRY(efi_stub_entry)
+	add	$0x4, %esp
 	call	efi_main
 	cmpl	$0, %eax
 	movl	%eax, %esi
@@ -51,12 +98,7 @@ ENTRY(startup_32)
 	hlt
 	jmp	1b
 2:
-	call	3f
-3:
-	popl	%eax
-	subl	$3b, %eax
-	subl	BP_pref_address(%esi), %eax
-	add	BP_code32_start(%esi), %eax
+	movl	BP_code32_start(%esi), %eax
 	leal	preferred_addr(%eax), %eax
 	jmp	*%eax
 

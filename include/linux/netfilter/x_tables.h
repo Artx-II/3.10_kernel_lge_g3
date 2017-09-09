@@ -1,191 +1,9 @@
 #ifndef _X_TABLES_H
 #define _X_TABLES_H
-#include <linux/kernel.h>
-#include <linux/types.h>
 
-#define XT_FUNCTION_MAXNAMELEN 30
-#define XT_EXTENSION_MAXNAMELEN 29
-#define XT_TABLE_MAXNAMELEN 32
-
-struct xt_entry_match {
-	union {
-		struct {
-			__u16 match_size;
-
-			/* Used by userspace */
-			char name[XT_EXTENSION_MAXNAMELEN];
-			__u8 revision;
-		} user;
-		struct {
-			__u16 match_size;
-
-			/* Used inside the kernel */
-			struct xt_match *match;
-		} kernel;
-
-		/* Total length */
-		__u16 match_size;
-	} u;
-
-	unsigned char data[0];
-};
-
-struct xt_entry_target {
-	union {
-		struct {
-			__u16 target_size;
-
-			/* Used by userspace */
-			char name[XT_EXTENSION_MAXNAMELEN];
-			__u8 revision;
-		} user;
-		struct {
-			__u16 target_size;
-
-			/* Used inside the kernel */
-			struct xt_target *target;
-		} kernel;
-
-		/* Total length */
-		__u16 target_size;
-	} u;
-
-	unsigned char data[0];
-};
-
-#define XT_TARGET_INIT(__name, __size)					       \
-{									       \
-	.target.u.user = {						       \
-		.target_size	= XT_ALIGN(__size),			       \
-		.name		= __name,				       \
-	},								       \
-}
-
-struct xt_standard_target {
-	struct xt_entry_target target;
-	int verdict;
-};
-
-struct xt_error_target {
-	struct xt_entry_target target;
-	char errorname[XT_FUNCTION_MAXNAMELEN];
-};
-
-/* The argument to IPT_SO_GET_REVISION_*.  Returns highest revision
- * kernel supports, if >= revision. */
-struct xt_get_revision {
-	char name[XT_EXTENSION_MAXNAMELEN];
-	__u8 revision;
-};
-
-/* CONTINUE verdict for targets */
-#define XT_CONTINUE 0xFFFFFFFF
-
-/* For standard target */
-#define XT_RETURN (-NF_REPEAT - 1)
-
-/* this is a dummy structure to find out the alignment requirement for a struct
- * containing all the fundamental data types that are used in ipt_entry,
- * ip6t_entry and arpt_entry.  This sucks, and it is a hack.  It will be my
- * personal pleasure to remove it -HW
- */
-struct _xt_align {
-	__u8 u8;
-	__u16 u16;
-	__u32 u32;
-	__u64 u64;
-};
-
-#define XT_ALIGN(s) __ALIGN_KERNEL((s), __alignof__(struct _xt_align))
-
-/* Standard return verdict, or do jump. */
-#define XT_STANDARD_TARGET ""
-/* Error verdict. */
-#define XT_ERROR_TARGET "ERROR"
-
-#define SET_COUNTER(c,b,p) do { (c).bcnt = (b); (c).pcnt = (p); } while(0)
-#define ADD_COUNTER(c,b,p) do { (c).bcnt += (b); (c).pcnt += (p); } while(0)
-
-struct xt_counters {
-	__u64 pcnt, bcnt;			/* Packet and byte counters */
-};
-
-/* The argument to IPT_SO_ADD_COUNTERS. */
-struct xt_counters_info {
-	/* Which table. */
-	char name[XT_TABLE_MAXNAMELEN];
-
-	unsigned int num_counters;
-
-	/* The counters (actually `number' of these). */
-	struct xt_counters counters[0];
-};
-
-#define XT_INV_PROTO		0x40	/* Invert the sense of PROTO. */
-
-#ifndef __KERNEL__
-/* fn returns 0 to continue iteration */
-#define XT_MATCH_ITERATE(type, e, fn, args...)			\
-({								\
-	unsigned int __i;					\
-	int __ret = 0;						\
-	struct xt_entry_match *__m;				\
-								\
-	for (__i = sizeof(type);				\
-	     __i < (e)->target_offset;				\
-	     __i += __m->u.match_size) {			\
-		__m = (void *)e + __i;				\
-								\
-		__ret = fn(__m , ## args);			\
-		if (__ret != 0)					\
-			break;					\
-	}							\
-	__ret;							\
-})
-
-/* fn returns 0 to continue iteration */
-#define XT_ENTRY_ITERATE_CONTINUE(type, entries, size, n, fn, args...) \
-({								\
-	unsigned int __i, __n;					\
-	int __ret = 0;						\
-	type *__entry;						\
-								\
-	for (__i = 0, __n = 0; __i < (size);			\
-	     __i += __entry->next_offset, __n++) { 		\
-		__entry = (void *)(entries) + __i;		\
-		if (__n < n)					\
-			continue;				\
-								\
-		__ret = fn(__entry , ## args);			\
-		if (__ret != 0)					\
-			break;					\
-	}							\
-	__ret;							\
-})
-
-/* fn returns 0 to continue iteration */
-#define XT_ENTRY_ITERATE(type, entries, size, fn, args...) \
-	XT_ENTRY_ITERATE_CONTINUE(type, entries, size, 0, fn, args)
-
-#endif /* !__KERNEL__ */
-
-/* pos is normally a struct ipt_entry/ip6t_entry/etc. */
-#define xt_entry_foreach(pos, ehead, esize) \
-	for ((pos) = (typeof(pos))(ehead); \
-	     (pos) < (typeof(pos))((char *)(ehead) + (esize)); \
-	     (pos) = (typeof(pos))((char *)(pos) + (pos)->next_offset))
-
-/* can only be xt_entry_match, so no use of typeof here */
-#define xt_ematch_foreach(pos, entry) \
-	for ((pos) = (struct xt_entry_match *)entry->elems; \
-	     (pos) < (struct xt_entry_match *)((char *)(entry) + \
-	             (entry)->target_offset); \
-	     (pos) = (struct xt_entry_match *)((char *)(pos) + \
-	             (pos)->u.match_size))
-
-#ifdef __KERNEL__
 
 #include <linux/netdevice.h>
+#include <uapi/linux/netfilter/x_tables.h>
 
 /**
  * struct xt_action_param - parameters for matches/targets
@@ -421,10 +239,17 @@ extern void xt_unregister_match(struct xt_match *target);
 extern int xt_register_matches(struct xt_match *match, unsigned int n);
 extern void xt_unregister_matches(struct xt_match *match, unsigned int n);
 
+int xt_check_entry_offsets(const void *base, const char *elems,
+                           unsigned int target_offset,
+                           unsigned int next_offset);
+
 extern int xt_check_match(struct xt_mtchk_param *,
 			  unsigned int size, u_int8_t proto, bool inv_proto);
 extern int xt_check_target(struct xt_tgchk_param *,
 			   unsigned int size, u_int8_t proto, bool inv_proto);
+
+void *xt_copy_counters_from_user(const void __user *user, unsigned int len,
+				 struct xt_counters_info *info, bool compat);
 
 extern struct xt_table *xt_register_table(struct net *net,
 					  const struct xt_table *table,
@@ -605,7 +430,7 @@ extern void xt_compat_init_offsets(u_int8_t af, unsigned int number);
 extern int xt_compat_calc_jump(u_int8_t af, unsigned int offset);
 
 extern int xt_compat_match_offset(const struct xt_match *match);
-extern int xt_compat_match_from_user(struct xt_entry_match *m,
+extern void xt_compat_match_from_user(struct xt_entry_match *m,
 				     void **dstptr, unsigned int *size);
 extern int xt_compat_match_to_user(const struct xt_entry_match *m,
 				   void __user **dstptr, unsigned int *size);
@@ -615,8 +440,9 @@ extern void xt_compat_target_from_user(struct xt_entry_target *t,
 				       void **dstptr, unsigned int *size);
 extern int xt_compat_target_to_user(const struct xt_entry_target *t,
 				    void __user **dstptr, unsigned int *size);
+int xt_compat_check_entry_offsets(const void *base, const char *elems,
+                                  unsigned int target_offset,
+                                  unsigned int next_offset);
 
 #endif /* CONFIG_COMPAT */
-#endif /* __KERNEL__ */
-
 #endif /* _X_TABLES_H */

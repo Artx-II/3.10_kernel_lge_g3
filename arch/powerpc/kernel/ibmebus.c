@@ -47,7 +47,6 @@
 #include <linux/stat.h>
 #include <linux/of_platform.h>
 #include <asm/ibmebus.h>
-#include <asm/abs_addr.h>
 
 static struct device ibmebus_bus_device = { /* fake "parent" device */
 	.init_name = "ibmebus",
@@ -181,6 +180,7 @@ static int ibmebus_create_device(struct device_node *dn)
 static int ibmebus_create_devices(const struct of_device_id *matches)
 {
 	struct device_node *root, *child;
+	struct device *dev;
 	int ret = 0;
 
 	root = of_find_node_by_path("/");
@@ -189,9 +189,12 @@ static int ibmebus_create_devices(const struct of_device_id *matches)
 		if (!of_match_node(matches, child))
 			continue;
 
-		if (bus_find_device(&ibmebus_bus_type, NULL, child,
-				    ibmebus_match_node))
+		dev = bus_find_device(&ibmebus_bus_type, NULL, child,
+				      ibmebus_match_node);
+		if (dev) {
+			put_device(dev);
 			continue;
+		}
 
 		ret = ibmebus_create_device(child);
 		if (ret) {
@@ -263,6 +266,7 @@ static ssize_t ibmebus_store_probe(struct bus_type *bus,
 				   const char *buf, size_t count)
 {
 	struct device_node *dn = NULL;
+	struct device *dev;
 	char *path;
 	ssize_t rc = 0;
 
@@ -270,8 +274,10 @@ static ssize_t ibmebus_store_probe(struct bus_type *bus,
 	if (!path)
 		return -ENOMEM;
 
-	if (bus_find_device(&ibmebus_bus_type, NULL, path,
-			    ibmebus_match_path)) {
+	dev = bus_find_device(&ibmebus_bus_type, NULL, path,
+			      ibmebus_match_path);
+	if (dev) {
+		put_device(dev);
 		printk(KERN_WARNING "%s: %s has already been probed\n",
 		       __func__, path);
 		rc = -EEXIST;
@@ -307,6 +313,7 @@ static ssize_t ibmebus_store_remove(struct bus_type *bus,
 	if ((dev = bus_find_device(&ibmebus_bus_type, NULL, path,
 				   ibmebus_match_path))) {
 		of_device_unregister(to_platform_device(dev));
+		put_device(dev);
 
 		kfree(path);
 		return count;

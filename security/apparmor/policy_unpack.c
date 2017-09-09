@@ -95,7 +95,7 @@ static int audit_iface(struct aa_profile *new, const char *name,
 	struct aa_profile *profile = __aa_current_profile();
 	struct common_audit_data sa;
 	struct apparmor_audit_data aad = {0,};
-	COMMON_AUDIT_DATA_INIT(&sa, NONE);
+	sa.type = LSM_AUDIT_DATA_NONE;
 	sa.aad = &aad;
 	if (e)
 		aad.iface.pos = e->pos - e->start;
@@ -571,6 +571,9 @@ static struct aa_profile *unpack_profile(struct aa_ext *e)
 			error = PTR_ERR(profile->policy.dfa);
 			profile->policy.dfa = NULL;
 			goto fail;
+		} else if (!profile->policy.dfa) {
+			error = -EPROTO;
+			goto fail;
 		}
 		if (!unpack_u32(e, &profile->policy.start[0], "start"))
 			/* default start state */
@@ -652,7 +655,7 @@ static bool verify_xindex(int xindex, int table_size)
 	int index, xtype;
 	xtype = xindex & AA_X_TYPE_MASK;
 	index = xindex & AA_X_INDEX_MASK;
-	if (xtype == AA_X_TABLE && index > table_size)
+	if (xtype == AA_X_TABLE && index >= table_size)
 		return 0;
 	return 1;
 }

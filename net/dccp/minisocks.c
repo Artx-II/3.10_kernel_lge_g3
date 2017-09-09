@@ -140,6 +140,7 @@ struct sock *dccp_create_openreq_child(struct sock *sk,
 			/* It is still raw copy of parent, so invalidate
 			 * destructor and make plain sk_free() */
 			newsk->sk_destruct = NULL;
+			bh_unlock_sock(newsk);
 			sk_free(newsk);
 			return NULL;
 		}
@@ -174,8 +175,7 @@ struct sock *dccp_check_req(struct sock *sk, struct sk_buff *skb,
 			 * To protect against Request floods, increment retrans
 			 * counter (backoff, monitored by dccp_response_timer).
 			 */
-			req->retrans++;
-			req->rsk_ops->rtx_syn_ack(sk, req, NULL);
+			inet_rtx_syn_ack(sk, req);
 		}
 		/* Network Duplicate, discard packet */
 		return NULL;
